@@ -4,12 +4,12 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
-from google import genai
 
 from prepare_pilot import read_file, build_user_prompt
 
-MODEL = "gemini-3.5-flash"
+MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 
 ALLOWED_SCENARIOS = {
     "F1", "F2", "F3",
@@ -21,11 +21,11 @@ ALLOWED_SCENARIOS = {
 BASE_DIR = Path(__file__).parent
 PROMPTS_DIR = BASE_DIR / "prompts"
 SCENARIOS_DIR = BASE_DIR / "scenarios"
-RESULTS_DIR = BASE_DIR / "results" / "gemini"
+RESULTS_DIR = BASE_DIR / "results" / "llama"
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Executa um cenário oficial no Gemini."
+        description="Executa um cenário oficial no Llama."
     )
 
     parser.add_argument(
@@ -90,58 +90,85 @@ def main():
 
     output_path = (
         RESULTS_DIR
-        / f"{scenario_id}_gemini-3.5-flash.json"
+        / f"{scenario_id}_llama-3.3-70b-instruct-fp8-fast.json"
     )
 
     if output_path.exists():
         raise FileExistsError(
             "Já existe uma resposta oficial para "
-            f"{scenario_id} no Gemini: {output_path}"
+            f"{scenario_id} no Llama: {output_path}"
         )
 
     load_dotenv()
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_token = os.getenv("CLOUDFLARE_API_TOKEN")
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 
-    if not api_key:
+    if not api_token:
         raise RuntimeError(
-            "GEMINI_API_KEY não encontrada no arquivo .env"
+            "CLOUDFLARE_API_TOKEN não encontrado no arquivo .env"
         )
 
-    client = genai.Client(
-        api_key=api_key
+    if not account_id:
+        raise RuntimeError(
+            "CLOUDFLARE_ACCOUNT_ID não encontrado no arquivo .env"
+        )
+
+    url = (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        f"{account_id}/ai/run/{MODEL}"
     )
 
-    interaction = client.interactions.create(
-        model=MODEL,
-        system_instruction=system_prompt,
-        input=user_prompt,
-        generation_config={
-            "thinking_level": "medium",
-            "max_output_tokens": 5000,
-        },
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+            },
+        ],
+        "max_tokens": 5000,
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=120,
     )
 
-    response_text = interaction.output_text
-    usage = interaction.usage
+    response.raise_for_status()
+
+    response_data = response.json()
+
+    if not response_data.get("success"):
+        raise RuntimeError(
+            f"Erro na API da Cloudflare: {response_data}"
+        )
+
+    response_text = response_data["result"]["response"]
+    usage = response_data["result"].get("usage")
 
     result = {
         "scenario_id": scenario_id,
         "model": MODEL,
-        "provider": "Google Gemini Developer API",
+        "model_developer": "Meta",
+        "provider": "Cloudflare Workers AI",
         "timestamp_utc": datetime.now(
             timezone.utc
         ).isoformat(),
         "configuration": {
-            "thinking_level": "medium",
-            "max_output_tokens": 5000,
+            "max_tokens": 5000,
         },
-        "usage": {
-            "input_tokens": usage.total_input_tokens,
-            "thought_tokens": usage.total_thought_tokens,
-            "output_tokens": usage.total_output_tokens,
-            "total_tokens": usage.total_tokens,
-        },
+        "usage": usage,
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
         "response": response_text,
@@ -156,13 +183,17 @@ def main():
         encoding="utf-8",
     )
 
-    print("\n===== USO DE TOKENS =====\n")
-    print(f"Entrada: {usage.total_input_tokens}")
-    print(f"Raciocínio: {usage.total_thought_tokens}")
-    print(f"Saída: {usage.total_output_tokens}")
-    print(f"Total: {usage.total_tokens}")
+    if usage:
+        print("\n===== USO DE TOKENS =====\n")
+        print(
+            json.dumps(
+                usage,
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
 
-    print("\n===== RESPOSTA DO GEMINI =====\n")
+    print("\n===== RESPOSTA DO LLAMA =====\n")
     print(response_text)
 
     print(
