@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 
-from prepare_pilot import read_file, build_user_prompt
+from prompt_builder import read_file, build_user_prompt
 
 MODEL = "gemini-3.5-flash"
 

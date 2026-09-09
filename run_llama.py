@@ -7,7 +7,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from prepare_pilot import read_file, build_user_prompt
+from prompt_builder import read_file, build_user_prompt
 
 MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 
